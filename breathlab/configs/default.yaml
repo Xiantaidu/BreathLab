@@ -1,0 +1,341 @@
+# BreathLab default configuration
+#
+# Every value here can be overridden from the command line where a switch exists
+# (see `python -m breathlab train --help`). The YAML is the single source of truth
+# for the baseline: a run's full config is stored inside its checkpoint, so an
+# evaluation always reproduces the exact training setup.
+
+seed: 1337
+
+# ---------------- paths ----------------
+paths:
+  cache_dir: "C:/BreathLab_data/data_cache"  # cache of 16 kHz resampled waveforms.
+                                             # First run under this path re-caches
+                                             # every clip (~2-3 GB, built automatically).
+  splits_dir: "D:/BreathLab/splits"
+  runs_dir: "D:/BreathLab/runs"
+
+# ---------------- audio / features ----------------
+audio:
+  sample_rate: 16000        # mono 16 kHz into the model
+  mono: true
+feature:
+  n_fft: 400                # 25 ms @ 16 kHz
+  win_length: 400           # 25 ms
+  hop_length: 160           # 10 ms -> 100 fps
+  n_mels: 64
+  fmin: 20
+  fmax: 8000
+  log_offset: 1.0e-6
+  # F0 / periodicity channels: breaths have no F0, singing does. Periodicity is a
+  # cross-domain invariant and gives the model an explicit cue for
+  # "voiced singing" vs "breath / fricative".
+  f0_channels: 2             # 0 = disabled; 2 = append [periodicity, log-F0] below the mel rows
+  input_rows: 66             # = n_mels + f0_channels; input rows of the model front end
+                             # (older checkpoints without this field fall back to n_mels)
+  norm_mode: global          # global = per-bin mean/var over the training set (original behaviour)
+                             # cmvn    = per-clip, per-bin mean/var removal
+                             # cmvn removes recording level and frequency-response differences
+                             # (measured: two singers of the same corpus differ 3x in breath ratio).
+                             # See normalize_mel() in breathlab/data/dataset.py.
+fps: 100                    # = sample_rate / hop_length
+
+# ---------------- labels ----------------
+labels:
+  positive_fields: ["breath_events"]           # AP positives
+  negative_fields: ["hard_negatives", "silent_breaths"]  # explicit negatives (all other frames are negative too)
+  ignore_fields: ["uncertain"]                  # masked out of the loss
+  # EP (exhale) and GS (glottal stop) are OPTIONAL output classes: they exist only through
+  # model.optional_heads, and at inference only when --emit explicitly requests them.
+  # Their supervision comes from dedicated event lists inside the manifests; which corpus
+  # contributes which events is a data-side decision and never appears in the repo.
+  # silent_breaths_as_sp: when True (historical behaviour), "silent breath" annotations
+  #   supervise the SP head ("quiet breath = silence"). FALSE moves them to uncertain
+  #   (loss-masked) instead, so the model stops being taught that a quiet breath is SP —
+  #   measured to matter for very quiet song-start inhales whose weak tails the SP head
+  #   then covers.
+  silent_breaths_as_sp: false
+
+# ---------------- corpora (manifest-driven) ----------------
+# Each corpus is a local, non-committed manifest <manifests_dir>/<alias>.jsonl; aliases
+# c1..cN are alphabetical, the mapping table sits next to the manifests. `weight` feeds
+# the WeightedRandomSampler (unlisted corpora default to 1.0); `split` selects the
+# strategy in make_splits.py.
+data:
+  hardneg_file: ""
+  manifests_dir: "D:/BreathLab/manifests"
+  corpus_weights:            # rebalanced 2026-10-01; the alias->corpus mapping lives only
+                             # in the local manifests directory and never enters the repo
+    c10: 0.12                # enormous natural mass, keep damped
+    c17: 3.0                 # oldest high-quality AP source
+    c12: 1.5
+    c11: 1.5
+    c13: 0.3                 # 5 s segments; SP/negative diversity, not AP volume
+    c3: 1.9                  # EP source
+    c2: 1.85                 # EP source
+    c4: 2.5                  # EP source
+    c5: 4.2                  # EP source, tiny corpus
+    c6: 5.0                  # EP source, 2 train clips
+    c1: 4.0                  # EP source, 4 train clips
+    c7: 1.8                  # EP source
+    c8: 6.5                  # AP+SP only; 9 train clips
+    c9: 3.7                  # THE only GS source; oversample hard
+    c15: 5.0                 # no AP; SP/negatives only
+    c16: 7.5                 # AP+SP, 43 train clips
+  corpora:
+    - {alias: c1,  split: by_song,           dev_frac: 0.15, test_frac: 0.15}
+    - {alias: c2,  split: by_song,           dev_frac: 0.15, test_frac: 0.15}
+    - {alias: c3,  split: by_song,           dev_frac: 0.15, test_frac: 0.15}
+    - {alias: c4,  split: by_song,           dev_frac: 0.15, test_frac: 0.15}
+    - {alias: c5,  split: by_song,           dev_frac: 0.15, test_frac: 0.15}
+    - {alias: c6,  split: by_song,           dev_frac: 0.15, test_frac: 0.15}
+    - {alias: c7,  split: by_song,           dev_frac: 0.15, test_frac: 0.15}
+    - {alias: c8,  split: by_song,           dev_frac: 0.15, test_frac: 0.15}
+    - {alias: c9,  split: by_song,           dev_frac: 0.15, test_frac: 0.15}
+    - {alias: c10, split: by_singer_frac,    dev_frac: 0.08, test_frac: 0.08}
+    - {alias: c11, split: by_song,           dev_frac: 0.15, test_frac: 0.15}
+    - {alias: c12, split: by_song,           dev_frac: 0.15, test_frac: 0.15}
+    - {alias: c13, split: by_singer_frac,    dev_frac: 0.10, test_frac: 0.10}
+    - {alias: c14, split: official_test_by_song, dev_frac: 0.08}
+    - {alias: c15, split: by_singer_frac,    dev_frac: 0.08, test_frac: 0.08}
+    - {alias: c16, split: by_song,           dev_frac: 0.15, test_frac: 0.15}
+    - {alias: c17, split: by_singer}         # official test singers, see split.test_singers
+
+# ---------------- splitting (by singer) ----------------
+split:
+  test_singers: ["female2", "female8", "male3", "male5", "male10"]  # official test singers
+  # Singers from the remaining 15 that become dev; the rest go to train.
+  # make_splits can pick them automatically for positive-sample balance, or pin them here.
+  dev_singers: []            # empty = choose automatically by positive-clip balance
+  n_dev_singers: 3
+
+# ---------------- dataset / windowing ----------------
+dataset:
+  window_sec: 6.0
+  hop_sec: 3.0               # stride used when generating window indices
+  pad_last: true
+  # Sampling multipliers for windows that contain a breath / a mined hard negative.
+  pos_window_oversample: 2.0
+  hardneg_window_oversample: 2.0
+
+# ---------------- augmentation (training only) ----------------
+augment:
+  enable: true
+  gain_db: [-10.0, 10.0]     # random gain range
+  noise_prob: 0.5
+  noise_snr_db: [5.0, 25.0]  # SNR of the added noise
+  compress_prob: 0.3         # probability of the dynamics-compression simulation (pop-vocal robustness)
+  channel_jitter_db: 3.0     # per-mel-bin gain jitter (frequency-response robustness)
+  breath_overlay_prob: 0.5   # probability of overlaying breaths onto breathless windows
+  breath_overlay_max_events: 3
+  breath_overlay_gain_db: [-6.0, 3.0]
+  breath_overlay_crossfade_ms: 15
+  # Recording-environment robustness
+  noisefloor_prob: 0.5       # constant low-level noise floor (white / pink)
+  noisefloor_snr_db: [20.0, 40.0]
+  harmony_overlay_prob: 0.25 # harmony interference: a pitch-shifted copy of the window is mixed in,
+                             # simulating "a breath sitting under sustained harmony"
+  harmony_overlay_gain_db: [-18.0, -8.0]
+  harmony_overlay_semitones: [-5.0, -2.0]   # downward shift range (avoids +-1 unison beating)
+  harmony_overlay_semitones_up: [2.0, 5.0]  # upward shift range
+  reverb_prob: 0.25          # synthetic-IR convolution reverb (applied to the whole window,
+                             # including overlaid breaths)
+  reverb_rt60_s: [0.25, 0.8]
+  reverb_predelay_ms: [0.0, 40.0]
+  reverb_wet_gain_db: [-14.0, -5.0]
+  pitch_shift_enable: false  # duration-preserving pitch shift, off by default
+  pitch_shift_semitones: [-1.5, 1.5]
+  # VTLN (vocal-tract-length normalisation), TRAINING ONLY: every window's mel filterbank is
+  # warped by a random alpha ~ U(1-r, 1+r), so the model cannot lean on a singer's spectral
+  # scale (bass vs soprano) as a shortcut. Off by default. Evaluation and the ONNX export
+  # always use alpha = 1, so existing checkpoints stay bit-compatible.
+  vtl_enable: false
+  vtl_alpha_range: 0.08
+  vtl_prob: 1.0
+  specaug:
+    enable: true
+    time_mask_param: 20      # frames
+    freq_mask_param: 12      # mel bins
+    n_time_masks: 2
+    n_freq_masks: 2
+
+# ---------------- model ----------------
+model:
+  name: "crnn"              # crnn | conformer | unet_mamba
+  # --- UNet-Mamba (arch A/B candidate, ~5.4M): CNN U-Net encoder (time -> T/4) +
+  # BiMamba x4 bottleneck (pure-torch selective scan, models/mamba_scan.py) +
+  # U-Net decoder with skip connections + per-frame heads. Heads follow the same
+  # head_index convention (AP/SP mandatory, EP/GS optional, onset/offset optional).
+  # NOTE: unlike crnn/conformer this backbone downsamples TIME 4x; boundary precision
+  # rests on the skips + onset/offset heads. Train FROM SCRATCH (no --init from the
+  # other backbones: the front ends are incompatible).
+  um_d_state: 16            # Mamba SSM state size N
+  um_d_conv: 4              # depthwise causal conv kernel inside the Mamba block
+  um_expand: 2              # inner expansion (d_inner = 2 * 256 = 512);
+                            # 1 = light variant: 3.6M params, measured ~1.7x faster
+  um_layers: 4              # BiMamba layers at the bottleneck
+  um_fusion: "concat"       # bidirectional fusion: concat | sum
+  um_neck_stride_t: 1       # time stride of the 128->256 neck conv; 1 = T/4 bottleneck
+                            # (default, short-breath friendly), 2 = the literal-diagram T/8
+  um_checkpoint: true       # per-BiMamba-block gradient checkpointing (VRAM saver);
+                            # keep true on the 8 GB laptop GPU
+  um_scan: "auto"           # selective-scan implementation: auto (Triton fused kernel,
+                            # one-time fallback to the torch scan on failure) | torch
+  um_compile: true          # torch.compile the Mamba blocks in training (measured 2.6x
+                            # faster + less VRAM; eval always runs eager, so windowed
+                            # inference never triggers per-shape recompiles)
+  # --- CRNN (lightweight baseline, ~1.5M) ---
+  cnn_channels: [32, 64, 128]
+  cnn_freq_pool: [2, 2, 2]   # pooling on the frequency axis only (time is never downsampled)
+  gru_hidden: 128
+  gru_layers: 2
+  dropout: 0.2
+  # --- Conformer (active when name=conformer, ~5.0M, for 20-40 h of data) ---
+  # d_model=192 -> head_dim = 192/4 = 48, a multiple of 8, so SDPA can use the
+  # mem-efficient / cuDNN backends. Measured: d_model=176 gives head_dim=44, which
+  # leaves only the math backend and is 6.5x slower. If d_model is ever changed to a
+  # non-multiple of 8, MHSA pads head_dim internally (mathematically equivalent, but
+  # `scale` must then be passed explicitly to scaled_dot_product_attention).
+  d_model: 192
+  n_heads: 4
+  n_layers: 5
+  ffn_mult: 4
+  conv_kernel: 15            # depthwise convolution kernel (frames); 15 frames ~ 150 ms context
+  fdy_m: 4                   # number of frequency-dynamic convolution candidates (0 = off)
+  # Per-layer FDY switch; layer order is conv1, conv2 of each block (2 x n_blocks entries).
+  # [1,1,1,1,0,0] = FDY in the first four layers (F=66/33, high frequency resolution),
+  # plain convolution in the last two (F=16, already pooled 8x).
+  # Evidence (tools/benchmark/profile_fdy_layers.py): L5/L6 take 47% of the standalone
+  # front end (89.4 ms) and FDY is 2.7x/3.1x slower than plain conv there, while at F=16
+  # each bin covers ~8 mel bins so per-frequency adaptation has little to gain.
+  # Measured speed win (~237 ms -> ~197 ms per step); accuracy impact still to be A/B tested.
+  # If accuracy drops, switch back to [1,1,1,1,1,1] or delete this line (== all FDY).
+  fdy_layers: [1, 1, 1, 1, 0, 0]
+  # FDY compute path (all four are mathematically equivalent; verify with
+  # `python tools/benchmark/bench_speed.py --parity --triton`):
+  #   loop   = per-candidate loop (original)
+  #   fuse   = all M candidates concatenated into one convolution
+  #   mix    = per-frequency kernel mixing (im2col + batched matmul); Mx less compute
+  #   triton = custom Triton kernel, same math as mix without the im2col/permute traffic
+  # Measured (batch 24 / 600 frames / bf16, d_model=192): triton_all 286 ms ->
+  # triton_nockpt 237 ms, blocks 93 ms, peak memory 3.3 GB. Throughput at batch 32/40
+  # is flat (~100 samples/s), so 24 is kept.
+  # The first Triton call compiles and autotunes (~10 s, cached on disk afterwards).
+  # If Triton is missing or compilation fails, the layer prints once and permanently
+  # falls back to mix.
+  fdy_mode: "triton"
+  fdy_checkpoint: false      # FDY activation recomputation: on = saves 0.3 GB but ~10% slower;
+                             # with triton the memory is already sufficient, so off.
+  sp_head: true              # supervised SP head (second output channel): learns
+                             # "fricative / singing != silence" from the silence annotations
+  # Optional output heads. AP and SP are the MANDATORY outputs; a head listed here exists
+  # only when explicitly configured, and at inference only leaves the model when --emit
+  # explicitly requests it. Supported values: ep (exhale), gs (glottal stop).
+  #   ep: exhale event lists in the manifests (audible exhales)
+  #   gs: glottal-stop event lists in the manifests (acoustically silence, also supervises SP)
+  optional_heads: ["ep", "gs"]
+  # onset/offset boundary auxiliary head: two extra output channels supervising the
+  # first and last frame of each breath segment.
+  # Motivation: evaluation is event level and matches onsets (200 ms collar) while
+  # training is only frame-level focal loss; this head directly supervises the change
+  # points (see train.boundary_loss_weight).
+  boundary_head: false
+  # ---- block topology (A/B at comparable parameter count) ----
+  # conformer     = serial attn -> conv (original behaviour)
+  # ebranchformer = parallel two-branch + enhanced merge (Branchformer / E-Branchformer
+  #                 style), +8.7% parameters (the merge depthwise convolution)
+  # Note: parameter names differ between the two, so checkpoints are NOT
+  # interchangeable (`--init` will report missing/unexpected keys).
+  block: conformer
+  branch: conv               # ebranchformer convolutional branch: conv (reuses ConvModule)
+                             # | cgmlp (original convolutional gating MLP)
+  merge_kernel: 31           # ebranchformer merge / branch kernel (frames)
+
+# ---------------- training ----------------
+train:
+  batch_size: 24
+  accum_steps: 1            # gradient accumulation: 16x2 = effective batch 32
+                            # matching the unet_mamba_v1 A/B arm's optimizer-step schedule
+  num_workers: 4            # 0 = load in the main process (most stable). Raise to 2-4 once stable
+  epochs: 30                # data volume grew ~8x, so fewer epochs are needed
+  lr: 3.0e-4
+  weight_decay: 1.0e-4
+  warmup_epochs: 3
+  grad_clip: 5.0
+  amp_dtype: "bf16"          # bf16 mixed precision
+  loss: "focal"              # focal | bce
+  # Sampling-share balancing: none | corpus | singer. With "singer" every singer contributes
+  # the same total sampling weight to an epoch, so the model cannot infer the breath density
+  # from the corpus identity. Off by default (historical behaviour).
+  group_balance: "none"
+  focal_alpha: 0.25          # RetinaNet convention: gamma already suppresses easy negatives,
+                             # so do not additionally up-weight positives via alpha
+  focal_gamma: 2.0
+  bce_pos_weight: 15.0       # used when loss = bce
+  sp_loss_weight: 0.5        # BCE weight of the supervised SP head (when sp_head = true)
+  ep_loss_weight: 0.5        # focal loss weight of the optional EP head (when configured)
+  gs_loss_weight: 0.5        # focal loss weight of the optional GS head (when configured)
+  early_stop_patience: 10
+  monitor: "event_f1"        # early stopping on dev event-level F1
+  # Best-checkpoint / early-stop monitor score = monitor_ap_weight * AP dev event F1
+  # + monitor_ep_weight * EP dev frame F1 (when the EP head is enabled; same for GS).
+  # A head's weight only takes effect when that head is in optional_heads, so pure AP
+  # runs still monitor plain event F1. v6_ep lesson: AP-only monitoring stopped the
+  # fine-tune at epoch 1 while the EP head kept climbing until epoch 9.
+  monitor_ap_weight: 0.65
+  monitor_ep_weight: 0.35
+  monitor_gs_weight: 0.35
+  # When > 0, frames of mined hard negatives (places where the model falsely fires on
+  # breathy / mixed-voice segments) are weighted by (1 + w).
+  # Produced by tools/data/mine_hard_negatives.py + data.hardneg_file;
+  # 0 = no weighting (window oversampling only).
+  hardneg_loss_weight: 0.0
+  # Weight and positive weight of the boundary (onset/offset) auxiliary loss.
+  # Each breath contributes exactly one onset and one offset frame, so the targets are
+  # extremely sparse -> use a large pos_weight (50); tune the weight starting from 0.5.
+  boundary_loss_weight: 0.5
+  boundary_pos_weight: 50.0
+  # ---- speed switches (see breathlab/speed.py; all measured, re-run
+  # tools/benchmark/bench_speed.py before changing any of them) ----
+  channels_last: true        # NHWC layout for convolution weights / activations
+  cudnn_benchmark: true      # let cuDNN search the fastest convolution algorithm per shape
+  fused_adamw: true          # single-kernel AdamW update
+  compile: false             # torch.compile of the whole model; slow first compile, unstable gain
+  # head_dim = d_model / n_heads = 48, a multiple of 8, so mem-efficient / cuDNN both work;
+  # `auto` is enough here.
+  sdpa_backend: "auto"       # auto | flash | mem | math | cudnn
+
+# ---------------- post-processing / evaluation ----------------
+postprocess:
+  threshold: 0.5             # overwritten by `evaluate` after sweeping on dev
+  median_filter_frames: 5
+  min_dur_ms: 60             # the shortest annotated AP is 33 ms and some segments are < 100 ms;
+                             # 60 ms keeps every real breath of >= 6 frames
+  merge_gap_ms: 80
+  # Silence (SP) decision: with a supervised SP head, sp_threshold applies;
+  # otherwise the energy rule is used - below (noise floor of non-AP energy) + margin
+  # AND the high band is at the floor too (excludes fricatives sh/ch/z/f).
+  sp_threshold: 0.5          # probability threshold of the supervised SP head
+  sp_veto_ap: false          # SP head may veto AP: frames the SP head confidently marks
+                             # silence are stripped from the AP stream before event
+                             # extraction. OFF by default: measured on real files, quiet
+                             # song-start breaths are REAL breaths whose tails the SP head
+                             # covers (the historical "quiet breath = SP" mapping taught
+                             # exactly that), so vetoing deletes true positives. Opt in
+                             # only if your data has genuine AP-in-silence false positives.
+  ep_threshold: 0.5          # probability threshold of the optional EP head (infer --emit ep)
+  gs_threshold: 0.5          # probability threshold of the optional GS head (infer --emit gs)
+  # Optional density-constrained decoding (breaths per second; 0 = off = plain threshold).
+  # Measured on v5_24k/test it is WORSE than the fixed threshold (see
+  # postprocess.density_constrained_events), so it stays off.
+  density_target: 0.0
+  density_cand_threshold: 0.15   # low threshold used only to harvest candidates for top-K
+  sp_floor_percentile: 5     # percentile anchoring the noise floor (non-AP frame energy)
+  sp_floor_margin_db: 8.0    # how many dB above the floor still counts as silence
+  sp_hf_guard_db: 6.0        # high band (top third of the mel rows) above its own floor -> not silence
+  sp_min_dur_ms: 120
+eval:
+  event_collar_ms: 200       # event matching tolerance
+  threshold_sweep: [0.1, 0.9, 0.05]  # start, stop, step
+  infer_window_sec: 12.0     # chunked sliding-window length (a full song would blow up attention memory)
+  infer_hop_sec: 6.0         # chunk stride (50% overlap; overlap is averaged)

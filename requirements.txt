@@ -1,0 +1,24 @@
+# BreathLab runtime dependencies.
+#
+# IMPORTANT: torch / torchaudio are intentionally NOT listed here.
+# Install them separately with the CUDA index that matches your driver so that a
+# plain `pip install -r requirements.txt` never silently replaces a working
+# CUDA build with a CPU wheel:
+#
+#   pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu129
+#
+# NOTE: do NOT install librosa. Its numba/soxr dependency chain hangs on some
+# Windows setups, and the whole feature pipeline is built on
+# soundfile + scipy + torchaudio instead.
+
+numpy>=1.26
+scipy>=1.11
+soundfile>=0.12
+PyYAML>=6.0
+tqdm>=4.66
+praatio>=6.0
+
+# Optional, only needed by the analysis / plotting scripts under tools/:
+# matplotlib>=3.8
+# scikit-learn>=1.4
+# tensorboard>=2.16

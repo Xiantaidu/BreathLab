@@ -1,0 +1,66 @@
+# ---------------- Python ----------------
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.eggs/
+.venv/
+venv/
+env/
+
+# ---------------- Tooling / caches ----------------
+.ruff_cache/
+.mypy_cache/
+.pytest_cache/
+.ipynb_checkpoints/
+*.swp
+.DS_Store
+Thumbs.db
+
+# ---------------- Project data (large / generated) ----------------
+# Raw corpora: tens of GB of wav + TextGrid files.
+dataset/
+# Resampled 16 kHz waveform cache (one .npy per clip).
+data_cache/
+# Training runs: checkpoints, logs, evaluation reports.
+runs/
+# Inference output (TextGrid + JSON).
+output/
+# Norm statistics and other per-run caches.
+*.npz
+
+# ---------------- Editors / OS ----------------
+.idea/
+.vscode/
+
+# ---------------- Local-only ----------------
+.workbuddy/
+.zcode/
+
+.zcodeignore
+
+# ---------------- Splits: local only (corpus names inside) ----------------
+splits/
+
+# ---------------- Splits: local only, corpus names inside ----------------
+splits/
+
+# ---------------- Manifests & local-only tooling (contain real corpus identities) ----------------
+manifests/
+tools/local/
+
+# ---------------- Name-coupled non-core analysis tools (kept locally, not committed) ----------------
+tools/adapt/adapt_singer.py
+tools/adapt/finetune_singer.py
+tools/analysis/acoustic_check_cl.py
+tools/analysis/analyze_durations.py
+tools/analysis/compare_hfa_ours.py
+tools/analysis/diag_per_corpus.py
+tools/analysis/edit_seq_eval.py
+tools/analysis/export_ep_check.py
+tools/analysis/label_stats.py
+tools/analysis/plot_density.py
+tools/analysis/plot_edit_seq.py
+tools/analysis/plot_unet_v1_report.py
+tools/analysis/render_edit_seq_report.py

@@ -1,0 +1,29 @@
+BreathLab
+Copyright 2026 BreathLab contributors
+
+This product includes software developed by the BreathLab contributors.
+
+--------------------------------------------------------------------------------
+Third-party dependencies
+--------------------------------------------------------------------------------
+
+This software depends on, but does not redistribute, the following
+third-party packages. Each is used under its own license:
+
+  * PyTorch and Torchaudio            (BSD-3-Clause)
+  * NumPy, SciPy, scikit-learn        (BSD-3-Clause)
+  * PyYAML                            (MIT)
+  * python-soundfile / libsndfile     (LGPL-2.1 / BSD-3-Clause)
+  * praatio                           (MIT)
+  * tqdm                              (MPL-2.0 / MIT)
+
+--------------------------------------------------------------------------------
+Datasets
+--------------------------------------------------------------------------------
+
+BreathLab does NOT redistribute any audio, annotation or derived cache.
+The corpora it can be trained on are described by local, non-committed
+manifests (see `data.manifests_dir` in `breathlab/configs/default.yaml`) and
+are obtained separately by the user; each is governed by its own license and
+terms of use. Users are responsible for complying with the license of every
+corpus they enable and for citing the corpora in any derived publication.

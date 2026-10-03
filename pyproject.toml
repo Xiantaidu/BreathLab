@@ -1,0 +1,86 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "breathlab"
+version = "0.1.0"
+description = "Automatic detection of audible breaths (AP) in singing voice"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "Apache-2.0" }
+license-files = ["LICENSE", "NOTICE"]
+authors = [{ name = "BreathLab contributors" }]
+keywords = [
+    "singing-voice",
+    "breath-detection",
+    "audio-labeling",
+    "textgrid",
+    "pytorch",
+    "conformer",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Multimedia :: Sound/Audio :: Analysis",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+
+# NOTE: torch / torchaudio are deliberately NOT hard dependencies.
+# Install them yourself with the right CUDA index so that `pip install -e .`
+# never downgrades or replaces an existing CUDA build:
+#   pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu129
+# See README.md -> Installation.
+dependencies = [
+    "numpy>=1.26",
+    "scipy>=1.11",
+    "soundfile>=0.12",
+    "PyYAML>=6.0",
+    "tqdm>=4.66",
+    "praatio>=6.0",
+]
+
+[project.optional-dependencies]
+torch = ["torch>=2.4", "torchaudio>=2.4"]
+dev = [
+    "torch>=2.4",
+    "torchaudio>=2.4",
+    "matplotlib>=3.8",
+    "tensorboard>=2.16",
+    "scikit-learn>=1.4",
+    "ruff>=0.6",
+]
+
+[project.scripts]
+breathlab = "breathlab.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/Xiantaidu/BreathLab"
+Documentation = "https://github.com/Xiantaidu/BreathLab/blob/main/README.md"
+Issues = "https://github.com/Xiantaidu/BreathLab/issues"
+
+[tool.setuptools]
+packages = ["breathlab", "breathlab.data", "breathlab.models"]
+
+[tool.setuptools.package-data]
+breathlab = ["configs/*.yaml"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+exclude = ["dataset", "data_cache", "runs", "output", ".workbuddy"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B"]
+ignore = [
+    "E731",   # lambda assignment: used for compact sampler/collate helpers
+    "B008",   # function call in default argument: idiomatic for typer-style CLIs
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tools/*" = ["E402"]   # scripts set matplotlib/torch backends before importing
