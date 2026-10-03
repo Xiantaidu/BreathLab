@@ -4,6 +4,22 @@ All notable changes to BreathLab are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0), and the project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- ONNX export and inference now support the optional EP/GS heads. `export_onnx.py`
+  writes the model's real `head_index` (including EP/GS) into `model.meta.json`,
+  and `tools/deploy/infer_onnx.py` gained `--emit ap,sp[,ep][,gs]`: optional-head
+  events use the same postprocessing as `breathlab.infer` (median filter ->
+  per-head threshold -> merge -> min duration) and appear as extra TextGrid tiers
+  and `<ep|gs>_events` keys in the JSON.
+
+### Fixed
+
+- `tools/deploy/infer_onnx.py --compare-torch` crashed unpacking `run_one`'s
+  4-tuple return value (broken when the optional-head emit feature landed).
+
 ## [0.1.0] - 2026-09-29
 
 First organised release. The codebase was prepared for publication: every comment,

@@ -67,20 +67,25 @@ def load_for_export(
     return model, cfg, ckpt
 
 
-def build_metadata(cfg: Dict, ckpt: Dict, out_path: Path, opset: int) -> Dict:
+def build_metadata(cfg: Dict, ckpt: Dict, out_path: Path, opset: int,
+                   head_index: Optional[Dict[str, int]] = None) -> Dict:
     """Collect everything the runtime needs to reproduce the training features."""
     f = cfg["feature"]
-    head_index = {"ap": 0}
-    if cfg["model"].get("sp_head", False):
-        head_index["sp"] = 1
-    if cfg["model"].get("boundary_head", False):
-        head_index["start"] = 2
-        head_index["end"] = 3
+    # The model owns the channel layout (AP, then optional SP / onset / offset /
+    # EP / GS); the hand-rolled computation is only a fallback for checkpoints
+    # whose build_model did not set the attribute.
+    heads = dict(head_index) if head_index else {"ap": 0}
+    if not head_index:
+        if cfg["model"].get("sp_head", False):
+            heads["sp"] = 1
+        if cfg["model"].get("boundary_head", False):
+            heads["start"] = 2
+            heads["end"] = 3
     return {
         "onnx_path": str(out_path),
         "opset": opset,
         "source_ckpt_epoch": ckpt.get("epoch"),
-        "head_index": head_index,
+        "head_index": heads,
         "audio": {
             "sample_rate": cfg["audio"]["sample_rate"],
             "mono": bool(cfg["audio"].get("mono", True)),
@@ -128,7 +133,11 @@ def export(
 
     model, cfg, ckpt = load_for_export(ckpt_path)
     rows = int(cfg["feature"].get("input_rows") or cfg["feature"]["n_mels"])
-    n_out = 1 + int(bool(cfg["model"].get("sp_head", False))) \
+    # The wrapper exports every head channel; the model's head_index is the single
+    # source of truth for the layout (AP, SP, onset/offset, EP/GS last).
+    head_index = dict(getattr(model, "head_index", {}) or {})
+    n_out = (max(head_index.values()) + 1) if head_index else \
+        1 + int(bool(cfg["model"].get("sp_head", False))) \
         + 2 * int(bool(cfg["model"].get("boundary_head", False)))
 
     frames = static_frames if static_frames else 1200
@@ -172,7 +181,7 @@ def export(
     print(f"[export] wrote {out_path}  ({size_mb:.1f} MB, opset {opset})")
     print(f"[export] ops ({len(ops)}): {', '.join(ops)}")
 
-    meta = build_metadata(cfg, ckpt, out_path, opset)
+    meta = build_metadata(cfg, ckpt, out_path, opset, head_index=head_index or None)
     meta_path = out_path.with_suffix(".meta.json")
     meta_path.write_text(json.dumps(meta, indent=2, ensure_ascii=False), encoding="utf-8")
     print(f"[export] metadata -> {meta_path}")

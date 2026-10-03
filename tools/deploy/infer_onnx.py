@@ -10,7 +10,7 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 import soundfile as sf
@@ -148,6 +148,15 @@ class BreathOnnx:
         self.sess = ort.InferenceSession(str(self.onnx_path), opts, providers=providers)
         self.provider = self.sess.get_providers()[0]
         self.head = self.meta.get("head_index", {"ap": 0})
+        # Channel count is static in the graph (only batch/time are dynamic), so the
+        # optional-head guard can be resolved once here instead of per window.
+        out_shape = self.sess.get_outputs()[0].shape
+        self.n_channels = int(out_shape[1]) if isinstance(out_shape[1], int) else None
+        # Optional event heads (EP = exhale, GS = glottal stop). start/end are boundary
+        # channels, not event heads, so they are deliberately excluded here.
+        self.opt_heads = {name: int(idx) for name, idx in self.head.items()
+                          if name in ("ep", "gs")
+                          and (self.n_channels is None or int(idx) < self.n_channels)}
 
     def load_wav(self, path: str | Path) -> np.ndarray:
         """Decode to mono float32 at the model's sample rate (scipy resampling)."""
@@ -189,8 +198,13 @@ class BreathOnnx:
         n = min(mel.shape[1], len(energy))
         return mel[:, :n], hf_db[:n], energy[:n]
 
-    def probs(self, x: np.ndarray, batch: int = 8) -> Tuple[np.ndarray, Optional[np.ndarray]]:
-        """Chunked sliding-window inference; returns `(ap_prob, sp_prob | None)`."""
+    def probs(self, x: np.ndarray, batch: int = 8) -> Tuple[np.ndarray, Optional[np.ndarray],
+                                                            Dict[str, np.ndarray]]:
+        """Chunked sliding-window inference; returns `(ap_prob, sp_prob | None, extras)`.
+
+        `extras` holds one averaged probability curve per optional event head (EP/GS)
+        present in the graph.
+        """
         ev = self.meta["eval"]
         fps = self.meta["fps"]
         win = int(round(ev.get("infer_window_sec", 12.0) * fps))
@@ -201,6 +215,7 @@ class BreathOnnx:
             starts.append(t - win)
         ap_acc = np.zeros(t, dtype=np.float64)
         sp_acc = np.zeros(t, dtype=np.float64)
+        opt_acc = {name: np.zeros(t, dtype=np.float64) for name in self.opt_heads}
         wsum = np.zeros(t, dtype=np.float64)
         for i0 in range(0, len(starts), batch):
             chunk = starts[i0:i0 + batch]
@@ -211,23 +226,44 @@ class BreathOnnx:
                 ap_acc[s:s + w] += out[j, int(self.head.get("ap", 0))]
                 if "sp" in self.head and out.shape[1] > int(self.head["sp"]):
                     sp_acc[s:s + w] += out[j, int(self.head["sp"])]
+                for name, idx in self.opt_heads.items():
+                    if out.shape[1] > idx:
+                        opt_acc[name][s:s + w] += out[j, idx]
                 wsum[s:s + w] += 1.0
         den = np.maximum(wsum, 1e-8)
         ap = (ap_acc / den).astype(np.float32)
         sp = (sp_acc / den).astype(np.float32) if "sp" in self.head else None
-        return ap, sp
+        extras = {name: (acc / den).astype(np.float32) for name, acc in opt_acc.items()}
+        return ap, sp, extras
 
-    def __call__(self, wav_path: str | Path) -> Tuple[List[Tuple[float, float]],
-                                                      List[Tuple[str, float, float]], float]:
-        from breathlab.postprocess import full_segmentation
+    def __call__(self, wav_path: str | Path,
+                 emit: Sequence[str] = ("ap", "sp")
+                 ) -> Tuple[List[Tuple[float, float]], List[Tuple[str, float, float]],
+                            float, Dict[str, List[Tuple[float, float]]]]:
+        from breathlab.postprocess import full_segmentation, prob_to_events
 
         y = self.load_wav(wav_path)
         x, hf_db, energy = self.features(y)
-        ap_prob, sp_prob = self.probs(x)
+        ap_prob, sp_prob, extras = self.probs(x)
         ap_events, segments = full_segmentation(
             ap_prob, energy, self.meta, self.threshold, hf_db=hf_db, sp_prob=sp_prob
         )
-        return ap_events, segments, len(y) / self.meta["audio"]["sample_rate"]
+        # Optional heads: independent per-head thresholding (no energy/SP interplay),
+        # identical to breathlab.infer.
+        pp = self.meta["postprocess"]
+        fps = self.meta["fps"]
+        extra_events: Dict[str, List[Tuple[float, float]]] = {}
+        for head in ("ep", "gs"):
+            if head not in emit:
+                continue
+            curve = extras.get(head)
+            if curve is None:
+                continue
+            thr = float(pp.get(f"{head}_threshold", 0.5))
+            extra_events[head.upper()] = prob_to_events(
+                curve, fps, thr, pp["median_filter_frames"], pp["min_dur_ms"],
+                pp["merge_gap_ms"])
+        return ap_events, segments, len(y) / self.meta["audio"]["sample_rate"], extra_events
 
 
 def check_features(runner: BreathOnnx, wav_path: str | Path) -> None:
@@ -281,9 +317,9 @@ def compare_torch(runner: BreathOnnx, wav_path: str | Path, ckpt: str | Path) ->
     from breathlab.infer import load_runner, run_one
 
     cfg, mean, std, thr, model = load_runner(ckpt, torch.device("cpu"))
-    ref_events, ref_seg, ref_dur = run_one(wav_path, cfg, mean, std, model,
-                                           torch.device("cpu"), thr)
-    got_events, got_seg, got_dur = runner(wav_path)
+    ref_events, ref_seg, ref_dur, ref_extra = run_one(wav_path, cfg, mean, std, model,
+                                                      torch.device("cpu"), thr)
+    got_events, got_seg, got_dur, got_extra = runner(wav_path)
     print(f"[compare] torch: {len(ref_events)} AP events, {ref_dur:.2f}s")
     print(f"[compare] onnx : {len(got_events)} AP events, {got_dur:.2f}s "
           f"(provider {runner.provider})")
@@ -312,8 +348,10 @@ def compare_torch(runner: BreathOnnx, wav_path: str | Path, ckpt: str | Path) ->
               f"max {np.max(ds)*1000:.1f} ms")
 
 
-def write_textgrid(path: str | Path, dur: float, segments, ap_events) -> None:
-    """Write a short-format TextGrid with a `labels` tier and an `AP` tier."""
+def write_textgrid(path: str | Path, dur: float, segments, ap_events,
+                   extra_events: Dict[str, List[Tuple[float, float]]] | None = None) -> None:
+    """Write a short-format TextGrid with a `labels` tier, an `AP` tier, plus optional
+    EP/GS tiers (each made contiguous, gaps left blank)."""
     def contiguous(entries):
         out, cur = [], 0.0
         for s, e, lab in sorted(entries):
@@ -334,6 +372,8 @@ def write_textgrid(path: str | Path, dur: float, segments, ap_events) -> None:
     tiers = [("labels", [(s, min(e, dur), lab) for lab, s, e in segments
                          if min(e, dur) > s + 1e-6]),
              ("AP", contiguous([(s, e, "AP") for s, e in ap_events]))]
+    for name, evs in (extra_events or {}).items():
+        tiers.append((name, contiguous([(s, e, name) for s, e in evs])))
     # Full ("normal") TextGrid format: praatio, Praat and Parselmouth all read it.
     lines = ['File type = "ooTextFile"', 'Object class = "TextGrid"', "",
              "xmin = 0.0", f"xmax = {dur:.6f}", "tiers? <exists>",
@@ -355,6 +395,10 @@ def main() -> None:
     ap.add_argument("--wav", nargs="+", default=None, help="Wav files or directories.")
     ap.add_argument("--out", default=None, help="Output directory (default: output/onnx).")
     ap.add_argument("--threshold", type=float, default=None, help="Override the threshold.")
+    ap.add_argument("--emit", default="ap,sp", metavar="AP,SP[,EP][,GS]",
+                    help="Event classes to output. EP (exhale) and GS (glottal stop) are "
+                         "optional and are only emitted when explicitly listed here AND "
+                         "the exported model carries the head.")
     ap.add_argument("--provider", default="auto",
                     help="'auto' (DML > CUDA > CPU), or an explicit onnxruntime provider.")
     ap.add_argument("--check-features", action="store_true",
@@ -372,6 +416,15 @@ def main() -> None:
           f"rows={runner.meta['feature']['input_rows']} fps={runner.meta['fps']} "
           f"norm={runner.meta['feature'].get('norm_mode')}")
 
+    emit = [e.strip().lower() for e in args.emit.split(",") if e.strip()]
+    bad = [e for e in emit if e not in ("ap", "sp", "ep", "gs")]
+    if bad:
+        raise SystemExit(f"--emit: unknown label(s) {bad}; allowed: ap, sp, ep, gs")
+    for head in ("ep", "gs"):
+        if head in emit and head not in runner.opt_heads:
+            print(f"[onnx] WARNING: --emit requests {head.upper()} but the model has "
+                  f"no {head.upper()} head; it will not be output")
+
     if args.check_features:
         for w in _collect(args.wav or []):
             check_features(runner, w)
@@ -386,9 +439,10 @@ def main() -> None:
     out_dir = Path(args.out) if args.out else Path("output/onnx")
     out_dir.mkdir(parents=True, exist_ok=True)
     for w in _collect(args.wav):
-        ap_events, segments, dur = runner(w)
+        ap_events, segments, dur, extra_events = runner(w, emit=emit)
         stem = Path(w).stem
-        write_textgrid(out_dir / f"{stem}.TextGrid", dur, segments, ap_events)
+        write_textgrid(out_dir / f"{stem}.TextGrid", dur, segments, ap_events,
+                       extra_events)
         meta = {
             "audio_file": Path(w).name,
             "duration_sec": round(dur, 4),
@@ -399,11 +453,18 @@ def main() -> None:
             "segments": [{"label": lab, "start_sec": round(s, 3), "end_sec": round(e, 3)}
                          for lab, s, e in segments],
         }
+        for name, evs in extra_events.items():
+            meta[f"{name.lower()}_events"] = [
+                {"start_sec": round(s, 3), "end_sec": round(e, 3)} for s, e in evs]
         (out_dir / f"{stem}.ap.json").write_text(
             json.dumps(meta, indent=2, ensure_ascii=False), encoding="utf-8")
         n_ap = sum(1 for lab, _s, _e in segments if lab == "AP")
         ap_sec = sum(e - s for lab, s, e in segments if lab == "AP")
-        print(f"  {stem}: {n_ap} AP segments, {ap_sec:.2f}s / {dur:.2f}s -> {out_dir}")
+        extra_txt = " | ".join(
+            f"{n} {name} segments" for name, evs in sorted(extra_events.items())
+            if (n := len(evs)))
+        print(f"  {stem}: {n_ap} AP segments, {ap_sec:.2f}s / {dur:.2f}s"
+              + (f" | {extra_txt}" if extra_txt else "") + f" -> {out_dir}")
 
 
 def _collect(paths) -> List[Path]:
